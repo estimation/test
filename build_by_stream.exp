@@ -1,0 +1,199 @@
+#!/usr/bin/expect -f
+
+####################################################################
+#
+#  To build SoC load according to a specified stream
+#  --by CAO Chi <chi.cao@alcatel-sbell.com.cn>
+#
+#  Parameters:
+#  1. Stream name,
+#  2. Release name,
+#  3. Duplex mode, TDD by default
+#  4. Temporary view
+#  5. Run type, Make or Install or both
+#  6. SD-CAM IP address
+#  7. SD-CEM IP address
+#  8. SD-CAM deb files path, available when "Install Only" selected
+#  9. SD-CEM deb files path, available when "Install Only" selected
+#
+####################################################################
+
+#Parameters Setting
+set Stream_Name    [lindex $argv 0]
+set Release        [lindex $argv 1]
+set Duplex_Mode    [lindex $argv 2]
+set Tmp_View       [lindex $argv 3]
+set Run_Type       [lindex $argv 4]
+set Sdcam_IP       [lindex $argv 5]
+set Sdcem_IP       [lindex $argv 6]
+set Sdcam_Deb_Path [lindex $argv 7]
+set Sdcem_Deb_Path [lindex $argv 8]
+
+set Main_Path      "/home/ltelr151ci/cif"
+set Clear_Tool     "/usr/atria/bin/cleartool"
+set Install_Cmd    "/vobs/pltf_lr/src/env/bin/lnxupg"
+set Compiler       "$Main_Path/do_build_lr_nanjing.sh"
+set Alter_View     "vw_173227_lr15"
+set User_Name      "ltelr151ci"
+set Password       "asb#1234"
+set Return_Value   0
+
+#Function Definition
+#Print log
+proc Print { Level Message } {
+  if { $Level == "D" } {
+    set Level_Msg "Debug"
+  } elseif { $Level == "W" } {
+    set Level_Msg "Warning"
+  } elseif { $Level == "E" } {
+    set Level_Msg "Error"
+  } else {
+    send_user "\nPrint function error: Invalid message level!\n"
+	  return
+  }
+  set Current_Sec [clock seconds]
+  set NOW [clock format $Current_Sec -format "%Y-%m-%d_%H:%M:%S"]
+  send_user "\n\[$NOW\] $Level_Msg : $Message\n"
+}
+
+#Create view
+proc Create_View { Clear_Tool Stream_Name View_Name } {
+  Print "D" "Creating view $View_Name"
+  Print "D" "$Clear_Tool mkview -stream $Stream_Name@/enba_pvob -tag $View_Name -stgloc cc_view_stg_Lte"
+  send "$Clear_Tool mkview -stream $Stream_Name@/enba_pvob -tag $View_Name -stgloc cc_view_stg_Lte\r"
+  expect {
+    -timeout 60
+    -re {"\n(Attached view to stream .*$Stream_Name.*)"}
+    timeout {
+      Print "E" "Creating view $View_Name timeout!"
+  	  exit 1
+    }
+  }
+}
+
+#Set view
+proc Set_View { Clear_Tool View_Name } {
+  Print "D" "Entering view $View_Name"
+  Print "D" "$Clear_Tool setview $View_Name"
+  send "$Clear_Tool setview $View_Name\r"
+  expect {
+    -timeout 60
+    -re {"\n(View:.*$View_Name.*>)"}
+    timeout {
+      Print "E" "Entering view $View_Name timeout!"
+  	  exit 1
+    }
+  }
+}
+
+#Delete view
+proc Delete_View { Clear_Tool Alter_View View_Name } {
+  Print "D" "Changing view to $Alter_View"
+  Print "D" "$Clear_Tool setview $Alter_View"
+  send "$Clear_Tool setview $Alter_View\r"
+  expect {
+    -timeout 60
+    -re {"\n(View:.*$Alter_View.*>)"}
+	  timeout {
+	    Print "E" "Changing view timeout, please delete the temporary view manually!"
+	    exit 1
+	  }
+  }
+
+  Print "D" "Deleting view $View_Name"
+  Print "D" "$Clear_Tool rmview -tag $View_Name"
+  send "$Clear_Tool rmview -tag $View_Name\r"
+  expect {
+    -timout 60
+    -re {"\n(View:.*$Alter_View.*>)"}
+	  timeout {
+	    Print "E" "Deleting view $View_Name failed, please delete it manually!"
+	    exit 1
+	  }
+  }
+}
+
+#Call compiler
+proc Call_Compiler { Compiler Release Duplex_Mode } {
+  Print "D" "Calling: $Compiler $Release $Duplex_Mode"
+  send "$Compiler $Release $Duplex_Mode\r"
+  expect {
+    -timeout [expr 3*60*60]
+    -re "Your build view to run for CIF is" {Print "D" "Compile Successfully!"}
+    timeout {
+      Print "E" "Compilation timeout: over 3 hours!"
+      set Return_Value 1
+    }
+  }
+}
+
+#Installing debian packages
+proc Install_Deb { Main_Path Install_Cmd Sdcam_IP Sdcam_Deb_Path Sdcem_IP Sdcem_Deb_Path } {
+  Print "D" "Begining deb packages installation"
+  set Cem_Cmd "$Install_Cmd -f -d $Main_Path/test_sdcem -l 0 -v $Sdcem_IP"
+  Print "D" "Installing SD-CEM: $Cem_Cmd"
+  send "$Cem_Cmd\r"
+  expect {
+    -timeout [expr 5*60]
+    -re "Upgrade operation has completed successfully." {Print "D" "SD-CEM installation success!"}
+	  timeout {
+	    Print "E" "SD-CEM installation timeout!"
+      exit 1
+	  }
+  }
+  set Cam_Cmd "$Install_Cmd -f -d $Main_Path/test_sdcam -l 0 -v $Sdcam_IP"
+  Print "D" "Installing SD-CAM: $Cam_Cmd"
+  send "$Cam_Cmd\r"
+  expect {
+    -timeout [expr 5*60]
+    -re "Upgrade operation has completed successfully." {Print "D" "SD-CAM installation success!"}
+    timeout {
+      Print "E" "SD-CAM installation timeout!"
+      exit 1
+    }
+  }
+}
+
+#Parameter List
+Print "D" "Stream_Name:     $Stream_Name"
+Print "D" "Release:         $Release"
+Print "D" "Duplex_Mode:     $Duplex_Mode"
+Print "D" "Tmp_View:        $Tmp_View"
+Print "D" "Run_Type:        $Run_Type"
+Print "D" "Sdcam_IP:        $Sdcam_IP"
+Print "D" "Sdcem_IP:        $Sdcem_IP"
+Print "D" "Sdcam_Deb_Path:  $Sdcam_Deb_Path"
+Print "D" "Sdcem_Deb_Path:  $Sdcem_Deb_Path"
+
+#User Login
+spawn su - $User_Name
+expect "Password:"
+send "$Password\r"
+expect -re "\n(\[^\n]+>)"
+
+switch -- $Run_Type {
+  "Make" {
+    Create_View   $Clear_Tool $Stream_Name $Tmp_View
+    Set_View      $Clear_Tool $Tmp_View
+    Call_Compiler $Compiler $Release $Duplex_Mode
+    Delete_View   $Clear_Tool $Alter_View $Tmp_View
+  }
+  
+  "Install" {
+    Set_View      $Clear_Tool $Alter_View
+    Install_Deb   $Main_Path $Install_Cmd $Sdcam_IP $Sdcam_Deb_Path $Sdcem_IP $Sdcem_Deb_Path
+  }
+  
+  "Make,Install" {
+    Create_View   $Clear_Tool $Stream_Name $Tmp_View
+    Set_View      $Clear_Tool $Tmp_View
+    Call_Compiler $Compiler $Release $Duplex_Mode
+    Delete_View   $Clear_Tool $Alter_View $Tmp_View  
+    Install_Deb   $Main_Path $Install_Cmd $Sdcam_IP $Sdcam_Deb_Path $Sdcem_IP $Sdcem_Deb_Path
+  }
+}
+
+send "exit\r"
+expect eof
+
+exit $Return_Value
